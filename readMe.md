@@ -1,8 +1,8 @@
-#### 1    build TCP socket model 
+### 1    build TCP socket model 
 steps: create     setopt    bind     listen     looping{    accept    handleRequest}
 ref: https://www.geeksforgeeks.org/socket-programming-cc/
 
-#### 2    handleRequest 
+### 2    handleRequest 
     2.1        reads multiple requests into a string     like R1/R2/R3...   
     2.2       looping to break the requests String and do
         2.21    parsing request 

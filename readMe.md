@@ -6,9 +6,9 @@ https://cseweb.ucsd.edu/~gmporter/classes/wi19/cse124/post/2019/01/12/tritonhttp
 
 
 ## HTTPServer.cc
-#### 1    搭建TCP socket 可以直接套用模板
-create     setopt    bind     listen     looping{    accept    handleRequest}
-https://www.geeksforgeeks.org/socket-programming-cc/
+#### 1    build TCP socket model 
+steps: create     setopt    bind     listen     looping{    accept    handleRequest}
+ref: https://www.geeksforgeeks.org/socket-programming-cc/
 
 #### 2    handleRequest 
     2.1        reads multiple requests into a string     like R1/R2/R3...   
@@ -20,27 +20,32 @@ https://www.geeksforgeeks.org/socket-programming-cc/
 
 
 ### 3   Testing
-    单个request发送
-        合法文件路径    相对路径    
-        不同文件类型    jpg png  html txt  ….
-    multiple  requests     一起发送
-cat  <(printf "GET /testing.txt HTTP/1.1\r\nHost: localhost\r\n\r\n") <(printf "GET /testing2.txt HTTP/1.1\r\nHost: localhost\r\n\r\n") <(printf "GET /testing3.txt HTTP/1.1\r\nHost: localhost\r\n\r\n") <(printf "GET /testing4.txt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")   | nc localhost 9000
-    multi threading 多用户同时请求        
-    handle timeout    5seconds无连接？部分数据收到？
+    3.1     sending single request
+        illegal path?   relative path? 
+        file permission check
+        different file types:    jpg png  html txt 
+    
+    3,2   multiple  requests in one client message
+    EX cat  <(printf "GET /testing.txt HTTP/1.1\r\nHost: localhost\r\n\r\n") <(printf "GET /testing2.txt HTTP/1.1\r\nHost: localhost\r\n\r\n") <(printf "GET /testing3.txt HTTP/1.1\r\nHost: localhost\r\n\r\n") <(printf "GET /testing4.txt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")   | nc localhost 9000
+    
+    3.3     multi threading to handle multi users requesting and the same time       
+    
+    3.4     handle timeout. 
+            set time out to be 5 seconds for each user, if no request recieved in 5 sec, cut connection.
 
 
+### Project summary, Can do better next time?
+    1   Overview, 
+        find relative resources to understand, find TCP socket programming tamplate
+        break projects into steps, 
+          
+    2   Coding 
+        apply encapusalation and modularization to design classes and functions 
+        focus on programming logic 
+            for those new methods to be used, like sys calls, read manual, test individually and then apply in project
+        TDD test driven development. Do not test all together, write part and test, then write the following
 
-### 项目收获总结：
-    1      整理思路    找资源  
-        先大致理解概念    理清思路    读参考代码框架    借鉴模板
-        这部分在开始的时候花费过多时间，比如读网站的project内容有很多困惑
-        没写过后端代码不知道从何下手，对项目的预算时间没有合理估量
+    3   Testing to handle edge cases
+        brainstorming to test based on functionalities  
+        think deeply
         
-    2    开始写代码    分模块    
-                    按照功能可以在写的过程中封装函数    也可以最后统一refactor code
-          代码最重要是逻辑思维    和代码框架    适当备注每个过程的主要任务
-                有些不熟悉的system call可以先读manual    然后单独测试    测好了拿来用
-                代码逻辑理顺了可以直接分部测试，不需要完全写完再测试，可以分阶段测试。
-
-    3    测试代码 handle edge cases
-                根据函数的功能    brainstorming

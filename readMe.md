@@ -1,11 +1,3 @@
-## build HTTP client -server connection 
-https://cseweb.ucsd.edu/~gmporter/classes/wi19/cse124/projects/pa1/
-
-HTTP model
-https://cseweb.ucsd.edu/~gmporter/classes/wi19/cse124/post/2019/01/12/tritonhttp-specification/
-
-
-## HTTPServer.cc
 #### 1    build TCP socket model 
 steps: create     setopt    bind     listen     looping{    accept    handleRequest}
 ref: https://www.geeksforgeeks.org/socket-programming-cc/

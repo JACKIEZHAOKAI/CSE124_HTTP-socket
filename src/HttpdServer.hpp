@@ -20,29 +20,28 @@
 #include <bits/stdc++.h> // string to char *
 #include <sys/time.h>
 #include <thread>
-
+#include <algorithm>   
+#include <vector> 
 using namespace std;
 
-// Defined class to store HTTP request components
 class HTTPRequest
 {
   public:
     string request = "";
     string uri = "";
     string version = ""; 
-    //error while reading the clinet request 
-    // bool 404Error =false;
-    bool requestErr = false; 
+    
+    bool Err400 = false; 
+    bool Err403 = false; 
+    bool Err404 = false; 
     bool hasHost = false;
     bool connectionClosed = false;
 };
 
-// Defined class to store HTTP Response components
 class HTTPResponse
 {
   public:
     string resCode = "";
-    string Server = "";
     string lastMode = "";
     string conType = "";
     string contLen = string("Content-Length: 0") + "\r\n";
@@ -54,20 +53,17 @@ class HTTPResponse
 class HttpdServer {
   public:
     HttpdServer(INIReader &t_config);
-    
     void parseMessage(char*, HTTPRequest *);
     void frameResponse(HTTPRequest*, HTTPResponse*);
     void storeMineTypesIntoMap();
     void sendResponseHeader(HTTPResponse*, int);
     void sendResponseFile(std::string&, int);
-    int readClientRequests(std::string&, int);
     void handle_client(int);
     void launch();
-
+    //multi threading
     thread* spawn(int &client_sock){
         return new thread([this,client_sock]{this->handle_client(client_sock);});
     };
-
 
   protected:
     INIReader &config;

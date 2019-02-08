@@ -6,12 +6,12 @@
 #include "HttpdServer.hpp"
 using namespace std;
 
-const int BUFSIZE = 8192;
+const int BUFSIZE = 1024;
 const char* LINE_END = "\r\n";
 
 const string OK200 = "200 OK\r\n";
 const string ERR400 = "400 Client Error\r\n";
-const string ERR403 = "403 Forbidden\r\n";
+const string ERR403 = "403 Permission denied\r\n";
 const string ERR404 = "404 Not Found\r\n";
 const string CONN_CLOSED = "Connection: close\r\n";
 const string SERVER_NAME = "Server: Server(chmod711)\r\n";
@@ -50,7 +50,7 @@ HttpdServer::HttpdServer(INIReader &t_config) : config(t_config)
         exit(EX_CONFIG);
     }
     minetypePath = minetypestr;
-    // log->info("minetype is {}",minetypePath);
+    log->info("minetype is {}",minetypePath);
 }
 
 // parse message and stored in HTTPRequest, given the msg format:
@@ -64,24 +64,39 @@ void HttpdServer::parseMessage(char* requestMessage, HTTPRequest *clntRequest) {
     
     auto log = logger();
 
-    // log->info("requestMessage {}", requestMessage);
     char *line = strtok(requestMessage, LINE_END);
-    string init_line = line;
-    
+
     // ========== break the initLine ================= 
-    string symlinkpath="";
-    clntRequest->request = init_line.substr(0, init_line.find(" "));
+    // check if contains three strings, request path version
+    string init_line = line;
+    char request_charArray[1000];
+    char symlinkpath_charArray[1000];
+    char version_charArray[1000];
 
-    string rest = init_line.substr( (clntRequest->request).length() + 1);
-    symlinkpath = rest.substr(0, rest.find(" "));
+    //format check
+    int para_num = std::count (init_line.begin(), init_line.end(), ' '); 
+    if( para_num != 2){
+        log->error("error in request header");
+        clntRequest->Err400 = true;
+        return;
+    }
 
-    clntRequest->version = rest.substr(symlinkpath.length() + 1);
+    sscanf(line, "%s %s %s", request_charArray, symlinkpath_charArray,  version_charArray);
 
+    clntRequest->request =  string(request_charArray);
+    string symlinkpath = string(symlinkpath_charArray);
+    clntRequest->version = string(version_charArray);
+    
 
     line = strtok(NULL, LINE_END);        
     bool hasHost=false;
- 
+
     // =========== find realpath ====================
+    //check if start with / else 400 error
+    if(symlinkpath[0] != '/'){
+        clntRequest->Err400 = true;
+        return;
+    }
     // concate doc_root to req uri
     string abosolutePath = DOC_ROOT + symlinkpath;
     //convert to abosolute path and store in uri
@@ -89,8 +104,7 @@ void HttpdServer::parseMessage(char* requestMessage, HTTPRequest *clntRequest) {
     actualpath = realpath(abosolutePath.c_str(), NULL);
     if (actualpath == NULL)
     {
-        log->error("error in path resolution");
-        clntRequest->requestErr = true;
+        clntRequest->Err404 = true;
         return;
     }
 
@@ -101,16 +115,18 @@ void HttpdServer::parseMessage(char* requestMessage, HTTPRequest *clntRequest) {
 
     clntRequest->uri = actualpath;
 
+    // =========== check key value pairs ===================
+    //check line by line if connection closed  OR host missing
     while (line)
     {
         string temp = line;
-        //check line by line if connection closed  OR host missing
+
         int pos = temp.find(": ");
         //if valid  key value pair
         if (pos == -1)
         {
             log->error("key value pair invalid");
-            clntRequest->requestErr = true;
+            clntRequest->Err400 = true;
             return;
         }
         string key = temp.substr(0, pos);
@@ -121,9 +137,9 @@ void HttpdServer::parseMessage(char* requestMessage, HTTPRequest *clntRequest) {
             hasHost = true;
         
         //check if connection is closed, Do not care lower or upper case
-        if (strcasecmp(key.c_str(), "connection") == 0 && strcasecmp(value.c_str(), "connection: close") == 0)
+        if (strcasecmp(key.c_str(), "connection") == 0 && strcasecmp(value.c_str(), "close") == 0)
         {
-            log->info("clinet closing connection");
+            log->info("clinet close connection");
             clntRequest->connectionClosed = true;
         }
         //next line
@@ -132,10 +148,9 @@ void HttpdServer::parseMessage(char* requestMessage, HTTPRequest *clntRequest) {
 
     if (hasHost==false){
         log->error("clinet request has no host");
-        clntRequest->requestErr = true;
+        clntRequest->Err400 = true;
     }
-    
-    //free memory
+   
     return;
 }
 
@@ -151,77 +166,70 @@ void HttpdServer::frameResponse(HTTPRequest *clntRequest, HTTPResponse *response
 {
     auto log = logger();
 
-    // Any error in request header parsing is 400 client error
-    if (clntRequest->requestErr)
-    {
-        response->resCode = ERR400;
-
-    }
 
     struct stat filestat;
 
+    //  400 error malform
+    if (clntRequest->Err400)
+    {
+        response->resCode = ERR400;
+    }
+    // 404  file path incorrect
     // Check if file exists, or if accessing file outside DOC_ROOT directory
-    if ( (stat(clntRequest->uri.c_str(), &filestat) < 0 && (clntRequest->requestErr == false))
-        || string(clntRequest->uri).rfind(DOC_ROOT, 0) != 0)
+    else if ( (stat(clntRequest->uri.c_str(), &filestat) < 0) || string(clntRequest->uri).rfind(DOC_ROOT, 0) != 0)
     { 
-        clntRequest->requestErr = true;
-        log->error("error in stat() to get info from the file");
+        clntRequest->Err404 = true;
         response->resCode = ERR404;
     }
-
-    // No file read permission
-    if ((filestat.st_mode & S_IROTH) == 0 && (clntRequest->requestErr == false))
+    // 403 No file read permission
+    else if ((filestat.st_mode & S_IROTH) == 0)
     { 
-        clntRequest->requestErr = true;
-        log->error("No file read permission");
+        clntRequest->Err403 = true;
         response->resCode = ERR403;
     }
-
     // No errors - 200 OK !
-    if (!clntRequest->requestErr)
-    {
+    else {
         struct tm *gmt = gmtime(&(filestat.st_mtime));
 
         char lastMode_charArray[100];
         strcpy(lastMode_charArray,response->lastMode.c_str());
 
-        strftime(lastMode_charArray, 1024, "Last-Modified: %a, %d %b %y %H:%M:%S GMT\r\n", gmt);
+        strftime(lastMode_charArray, 1024, "Last-Modified: %a, %d %b %y %T %z\r\n", gmt);
 
         response->lastMode = lastMode_charArray;
         response->resCode = OK200;
         response->contLen = "Content-Length: " + to_string(filestat.st_size) + LINE_END;
 
-        int pos = (clntRequest->uri).rfind(".");
+        int pos = (clntRequest->uri).rfind("."); // find file extension
 
-        // Get MIME type if existt
-        if (pos >= 0)
+        //deal with MIME types if extension exists
+        if (pos >= 0) 
         {
             string postfix = clntRequest->uri.substr(pos, string::npos);
-            // MIME type do not exist in mime.types
-            if (minetypeMap.find(postfix) == minetypeMap.end())
-            {
-                log->error("MIME type do not exist in mime.types");
-            }
-            else
-            { // MIME type exists in mime.types
-                log->info("reading mine type");
+                //if can find mime type
+            if (minetypeMap.find(postfix) != minetypeMap.end()) { 
                 response->conType = "Content-Type: " + minetypeMap[postfix] + LINE_END;
+            } else {
+                response->conType = string("Content-Type: application/octet-stream") + LINE_END;
             }
-        }
-        response->Server = SERVER_NAME;
+        } 
+        else{
+            response->conType = string("Content-Type: application/octet-stream") + LINE_END;
+        }   
     }
 
-    if (clntRequest->connectionClosed)
+    if (clntRequest->connectionClosed || clntRequest->Err400 )
     {   
         response->connect = CONN_CLOSED;
     }
 
-    response->header = clntRequest->version + " " + response->resCode + response->Server + response->lastMode
+    response->header ="HTTP/1.1 " + response->resCode + SERVER_NAME + response->lastMode
      + response->contLen + response->conType + response->connect + LINE_END;
 
     return;
 }
 
+// ========== parse config file into a mimetype hashmap ==========
 void HttpdServer::storeMineTypesIntoMap()
 {
     auto log = logger();
@@ -263,7 +271,6 @@ void HttpdServer::sendResponseFile(string &actualpath, int client_sock)
     //get file size
     if (stat(actualpath.c_str(), &st) != 0)
     {
-        log->error("error in stat() to get info from the file");
         return;
     }
     fileSize = st.st_size;
@@ -282,136 +289,141 @@ void HttpdServer::sendResponseFile(string &actualpath, int client_sock)
     sendfile(client_sock, in_fd, NULL, fileSize);
 }
 
-int HttpdServer::readClientRequests(string& clntMessage,int client_sock){
-    
-    auto log = logger();
-    
-    char buffer[BUFSIZE];
-    ssize_t clntRqstSize;
-         
-    while (true) {
-        // read data from socket
-        clntRqstSize = recv(client_sock, buffer, BUFSIZE, 0);
-        //check edge case
-        if (clntRqstSize == -1)
-        {
-            log->error("error in received message crush");
-            return -1;
-        }
-        if (clntRqstSize == 0)
-        {
-            log->error("peer client close connection");
-            return 0;
-        }
-        //store buffer into clntMessage
-        clntMessage += string(buffer);
-        // clear the buffer
-        memset(buffer, '\0', BUFSIZE);
-        //store and break if read all messages from client
-        if (clntRqstSize < BUFSIZE){
-            break;
-        }
-    }
-    return 1;
-}
 
-// handle clinet request and make a response
+// ============= handle clinet request and make a response ===================
 void  HttpdServer::handle_client(int client_sock)
 {
     auto log = logger();
 
-    string clntMessage = "";
-    // ==============   0 read all clinet requests into clntMessag=======
-    int res = readClientRequests(clntMessage, client_sock);
-    //inf recv wrong request 
-    if (res == 0 || res ==  -1){
-        //send file
-        // log->info("start sendResponseFile()...");
-        // sendResponseFile(clntRequest->uri, client_sock);
+    string clntMessage;
+    char buffer[BUFSIZE];
+    memset(buffer, 0, BUFSIZE);
+    ssize_t numBytesRcvd = recv(client_sock, buffer, BUFSIZE, 0);
+    size_t position = 0;
+    string request="";   
+
+
+    if (numBytesRcvd < 0 && errno == EWOULDBLOCK){
+        log->warn("closing socket due to timeout\n");
+        close(client_sock);
+        return;
+    }
+    if (numBytesRcvd < 0){
+        log->error("recv() failed");
         return;
     }
 
-    size_t position = 0;
-    string rest = clntMessage;
-    string clientMsg="";        // a single clientMsg does not include \r\n\r\n
+    // Send received string and receive again until end of stream
+    while(numBytesRcvd>0){  
 
-    //handle request by request 
-     while(1){
-        //go to the next request , split by "\r\n\r\n"
-        position = rest.find( "\r\n\r\n");
-        if(position == string::npos)
-            break;
-        clientMsg =  rest.substr(0, position);
-        rest = rest.substr(position+4);
+        //append buffer data to clntMessage , clntMessage may contains many requests
+        clntMessage += std::string(buffer);
+        memset(buffer, 0, BUFSIZE);    
+  
+        //handle request by request 
+        while(1){
+            //go to the next request , split by "\r\n\r\n"
+            position = clntMessage.find( "\r\n\r\n");
 
-        //    ============  1  parseMessage   ============
-        HTTPRequest *clntRequest = new HTTPRequest();
-        log->info("start parseMessage()...");        
-        parseMessage(&clientMsg[0], clntRequest);
+            if(position == string::npos){
+                position = 0;
+                break;
+            }
+            request = clntMessage.substr(0, position);
+            clntMessage = clntMessage.substr(position+4); 
 
-        //    ============ 2  frameResponse ============
-        HTTPResponse *response = new HTTPResponse();
-        log->info("start frameResponse()...");
-        frameResponse(clntRequest, response);
-    
-        //   ===========   3  send response to client ==========
-        //send file header
-        log->info("start sendResponseHeader()...");
-        sendResponseHeader(response, client_sock);
+            //    ============  1  parseMessage   ============
+            HTTPRequest *clntRequest = new HTTPRequest();
+            log->info("start parseMessage()...");        
+            parseMessage(&request[0], clntRequest);
 
-        if (!clntRequest->requestErr) {
-            //send file
-            log->info("start sendResponseFile()...");
-            sendResponseFile(clntRequest->uri, client_sock);
-        } else {
-            log->error("client error 400");
-            break;
+            //    ============ 2  frameResponse ============
+            HTTPResponse *response = new HTTPResponse();
+            log->info("start frameResponse()...");
+            frameResponse(clntRequest, response);
+        
+            //   ===========   3  send response to client ==========
+            //send file header
+            log->info("start sendResponseHeader()...");
+            sendResponseHeader(response, client_sock);
+
+            if (clntRequest->Err400){
+                log->error("client error 400");
+                break;
+            }
+            else if (clntRequest->connectionClosed ){
+                log->info("start sendResponseFile()...");
+                sendResponseFile(clntRequest->uri, client_sock);
+                log->info("connection closed");
+                break;
+            }
+            else if (clntRequest->Err403){
+                log->error("client error 403");
+            }
+            else if (clntRequest->Err404){
+                log->error("client error 404");
+            }
+            else{
+                log->info("start sendResponseFile()...");
+                sendResponseFile(clntRequest->uri, client_sock);
+            }
+            //free memory
+            delete(clntRequest);
+            delete(response);
+        }
+
+        numBytesRcvd = recv(client_sock, buffer, BUFSIZE, 0);
+
+        if (numBytesRcvd < 0 && errno == EWOULDBLOCK){
+            log->warn("closing socket due to timeout\n");
+            close(client_sock);
+            return;
+        }
+        if (numBytesRcvd < 0){
+            log->error("recv() failed");
+            return;
         }
     }
+
     //close client socket
     close(client_sock);
-    log->info("warning: client sock {} closed after 5 seconds", client_sock);
-
+    log->warn("client closed");
     return;
 }
 
+
+//================== launch a server =========================
 void HttpdServer::launch()
 {
-    // ========== parse config file into a mimetype hashmap ==========
-    storeMineTypesIntoMap();
-
-    //================== set up a server =========================
     auto log = logger();
+
+    storeMineTypesIntoMap();
 
     log->info("Launching web server");
     log->info("Port: {}", port);
     log->info("doc_root: {}", DOC_ROOT);
-
-    // Put code here that actually launches your webserver...
-
-    // Build a server address structure
-    // struct sockaddr_in {
-    //     short            sin_family;   // e.g. AF_INET
-    //     unsigned short   sin_port;     // e.g. htons(3490)
-    //     struct in_addr   sin_addr;     // see struct in_addr, below
-    //     char             sin_zero[8];  // zero this if you want to
-    // };
+    
     struct sockaddr_in serv_addr;             // Local address
     memset(&serv_addr, 0, sizeof(serv_addr)); // clear the address structure
 
     /* setup the host_addr structure for use in bind call */
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    short portNumber = (short)stoi(port);    //cast string to short
+    short portNumber = (short)stoi(port);   
     serv_addr.sin_port = htons(portNumber);
 
-    // 1    create a socket - Get the file descriptor!
+    // 1    create a socket 
     int server_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_sock < 0) {
         log->error("ERROR create socket");
         exit(1);
     }
-    // 2    bind to an address -What port am I on?
+
+    //release port optionally
+    int optval=1;
+    setsockopt (server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof (optval));
+
+    // 2    bind to an address/ port
     if (bind(server_sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
         log->error("ERROR on binding");
@@ -423,8 +435,9 @@ void HttpdServer::launch()
         log->error("listen failed");
         exit(1);
     }
+    
     log->info("start Waiting for connections...");
-    vector<thread *> workers; //thread stack created in heap to handle connections
+    vector<thread *> workers; //thread stack created in heap to handle multiple connections
 
     // 4   handle request 
     while (true)
@@ -432,43 +445,34 @@ void HttpdServer::launch()
         struct sockaddr_in clnt_addr;
         char clientName[16];
 
-        struct timeval recvTimeout;
-        recvTimeout.tv_sec = 5;         //set receive timeout to be 5 seconds 
-        recvTimeout.tv_usec = 0;
-        int optval=1;
-
-        // 5.1    try to accept the connection from a client.
+        struct timeval timeOut;
+        timeOut.tv_sec = 5;         //set receive timeout to be 5 seconds 
+        timeOut.tv_usec = 0;
+       
+        // 4.1  try to accept the connection from a client.
         socklen_t clntAddrLen = sizeof(clnt_addr);
         int client_sock = accept(server_sock, (struct sockaddr *)&clnt_addr, &clntAddrLen);
         auto flag1 = inet_ntop(AF_INET, &clnt_addr.sin_addr.s_addr, clientName, sizeof(clientName));
-        auto flag2 = setsockopt (client_sock, SOL_SOCKET, SO_RCVTIMEO , (char *)&recvTimeout, sizeof(recvTimeout) );
-        auto flag3 = setsockopt (server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof (optval));
+        setsockopt (client_sock, SOL_SOCKET, SO_RCVTIMEO,(char *)&timeOut, sizeof(timeOut) );//set timeout for client connection
+        setsockopt (client_sock, SOL_SOCKET, SO_SNDTIMEO,(char *)&timeOut, sizeof(timeOut) );
 
-        // go to next connection IF this clinet socket failed
         if (client_sock == -1)
         {
             log->error("can not resolve this client socket ");
         }
-        // go to next connection IF read invalid client address
         else if ( flag1 == NULL)
         {
-            log->error("Unable to get client address");
-        }
-        else if ( flag2 < 0){
-            log->error("failed to set timeout for this client");
-        }
-        else if ( flag3 < 0) {
-            log->error("setsockopt released");
+            log->error("Unable to get client address/port");
         }
         else{
-            //5.2   handle multi clienet connections using multi-threading
+            //4.2   handle  clienet using
             log->info("Handling client {}", clientName);
             thread *t = spawn(client_sock);
             t->detach();
             workers.push_back(t);
         }
     }
-    // 6    close server to releases data.
+    // 5    close server 
     close(server_sock);
 }
 

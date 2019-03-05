@@ -1,5 +1,7 @@
 ### 1    build TCP socket model 
+
 steps: create     setopt    bind     listen     looping{    accept    handleRequest}
+
 ref: https://www.geeksforgeeks.org/socket-programming-cc/
 
 ### 2    handleRequest 
